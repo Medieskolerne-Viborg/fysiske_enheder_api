@@ -27,7 +27,7 @@ Alle svar har samme form:
 | GET | `/display` | — | enhed læser | hent tekst til OLED |
 | PUT | `/display` | `{ "text": "…" }` | React skriver | sæt tekst |
 | GET | `/led` | — | enhed læser | hent farve (`red/yellow/green/off`) |
-| PUT | `/led` | `{ "color": "red" }` | React skriver | sæt LED |
+| PUT | `/led` | `{ "color": "red" }` | React skriver | sæt LED (`red/yellow/green/off/on/blink`) |
 | GET | `/button` | — | React læser | hent tryk-tæller |
 | POST | `/button/press` | — | enhed skriver | registrér et tryk |
 | DELETE | `/button` | — | React | nulstil tæller |

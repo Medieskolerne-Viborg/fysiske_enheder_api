@@ -25,7 +25,8 @@ const state = {
   sensor: { value: null, updated: null },          // en måling fra en enhed
 };
 
-const LED_COLORS = ["red", "yellow", "green", "off"];
+// Farver til trafiklys-LED'er + on/blink til den indbyggede LED (GPIO2).
+const LED_COLORS = ["red", "yellow", "green", "off", "on", "blink"];
 
 // Lille hjælper, så alle svar ser ens ud.
 const ok = (res, data, message = "ok") =>
