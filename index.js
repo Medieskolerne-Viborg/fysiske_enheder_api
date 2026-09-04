@@ -3,7 +3,10 @@
 //
 //  Ét fælles, offentligt API som både React-apps OG ESP32'er taler med.
 //  Ingen database: al tilstand ligger i hukommelsen (nulstilles ved genstart).
-//  Det er helt bevidst — så er den nem at forstå og nem at deploye.
+//
+//  ELEV-ID ("rum"): hver elev bruger sit eget id via ?id=<navn> i URL'en,
+//  så ingen overskriver hinanden. Uden id bruges rummet "demo".
+//    fx:  GET /led?id=anne     PUT /display?id=anne
 //
 //  Svarformat overalt:  { status: "ok" | "error", message, data }
 // ─────────────────────────────────────────────────────────────────────────
@@ -17,16 +20,26 @@ app.use(cors()); // React (browser) må kalde API'et. ESP32 er ligeglad med CORS
 
 const PORT = process.env.PORT || 3055;
 
-// ── Tilstanden (én simpel "hukommelse" for enhederne) ──────────────────────
-const state = {
-  display: { text: "Hej fra skyen" },              // tekst til OLED
-  led: { color: "off" },                           // rød | gul | grøn | off
-  button: { count: 0, lastPressed: null },         // fysisk knap → tæller
-  sensor: { value: null, updated: null },          // en måling fra en enhed
-};
-
-// Farver til trafiklys-LED'er + on/blink til den indbyggede LED (GPIO2).
 const LED_COLORS = ["red", "yellow", "green", "off", "on", "blink"];
+
+// ── Ét "rum" (state) pr. elev-id ────────────────────────────────────────────
+const rooms = new Map();
+
+function newRoom() {
+  return {
+    display: { text: "Hej fra skyen" },
+    led: { color: "off" },
+    button: { count: 0, lastPressed: null },
+    sensor: { value: null, updated: null },
+  };
+}
+
+// Find (eller opret) rummet for dette kald ud fra ?id=. Standard: "demo".
+function room(req) {
+  const id = String(req.query.id || "demo").slice(0, 40);
+  if (!rooms.has(id)) rooms.set(id, newRoom());
+  return rooms.get(id);
+}
 
 // Lille hjælper, så alle svar ser ens ud.
 const ok = (res, data, message = "ok") =>
@@ -37,6 +50,8 @@ const fail = (res, code, message) =>
 // ── Forside / health ───────────────────────────────────────────────────────
 app.get("/", (req, res) => {
   ok(res, {
+    hint: "Brug ?id=<dit-navn> så du har dit eget rum, fx /led?id=anne",
+    rooms: rooms.size,
     endpoints: [
       "GET  /display", "PUT  /display   { text }",
       "GET  /led", "PUT  /led       { color }",
@@ -47,56 +62,65 @@ app.get("/", (req, res) => {
 });
 
 // ── DISPLAY (tekst til OLED) — React skriver, ESP32 læser ───────────────────
-app.get("/display", (req, res) => ok(res, { text: state.display.text }));
+app.get("/display", (req, res) => ok(res, { text: room(req).display.text }));
 
 app.put("/display", (req, res) => {
   const { text } = req.body;
   if (typeof text !== "string" || text.trim() === "") {
     return fail(res, 400, "Feltet 'text' skal være en tekst");
   }
-  state.display.text = text.trim();
-  ok(res, { text: state.display.text }, "Display opdateret");
+  const r = room(req);
+  r.display.text = text.trim();
+  ok(res, { text: r.display.text }, "Display opdateret");
 });
 
 // ── LED (farve) — React sætter, ESP32 læser og tænder ───────────────────────
-app.get("/led", (req, res) => ok(res, { color: state.led.color }));
+app.get("/led", (req, res) => ok(res, { color: room(req).led.color }));
 
 app.put("/led", (req, res) => {
   const { color } = req.body;
   if (!LED_COLORS.includes(color)) {
     return fail(res, 400, `'color' skal være en af: ${LED_COLORS.join(", ")}`);
   }
-  state.led.color = color;
-  ok(res, { color: state.led.color }, "LED opdateret");
+  const r = room(req);
+  r.led.color = color;
+  ok(res, { color: r.led.color }, "LED opdateret");
 });
 
 // ── KNAP (input) — ESP32 melder tryk, React læser tælleren ──────────────────
-app.get("/button", (req, res) =>
-  ok(res, { count: state.button.count, lastPressed: state.button.lastPressed }));
+app.get("/button", (req, res) => {
+  const b = room(req).button;
+  ok(res, { count: b.count, lastPressed: b.lastPressed });
+});
 
 app.post("/button/press", (req, res) => {
-  state.button.count += 1;
-  state.button.lastPressed = new Date().toISOString();
-  ok(res, { count: state.button.count, lastPressed: state.button.lastPressed }, "Tryk registreret");
+  const r = room(req);
+  r.button.count += 1;
+  r.button.lastPressed = new Date().toISOString();
+  ok(res, { count: r.button.count, lastPressed: r.button.lastPressed }, "Tryk registreret");
 });
 
 // Nulstil tælleren (fx fra React).
 app.delete("/button", (req, res) => {
-  state.button = { count: 0, lastPressed: null };
-  ok(res, state.button, "Tæller nulstillet");
+  const r = room(req);
+  r.button = { count: 0, lastPressed: null };
+  ok(res, r.button, "Tæller nulstillet");
 });
 
 // ── SENSOR (input) — ESP32 sender en måling, React læser den ────────────────
-app.get("/sensor", (req, res) =>
-  ok(res, { value: state.sensor.value, updated: state.sensor.updated }));
+app.get("/sensor", (req, res) => {
+  const s = room(req).sensor;
+  ok(res, { value: s.value, updated: s.updated });
+});
 
 app.put("/sensor", (req, res) => {
   const { value } = req.body;
   if (typeof value !== "number") {
     return fail(res, 400, "Feltet 'value' skal være et tal");
   }
-  state.sensor = { value, updated: new Date().toISOString() };
-  ok(res, state.sensor, "Sensor opdateret");
+  const r = room(req);
+  r.sensor = { value, updated: new Date().toISOString() };
+  ok(res, r.sensor, "Sensor opdateret");
 });
 
 // ── Ukendt rute ─────────────────────────────────────────────────────────────
