@@ -1,0 +1,15 @@
+{
+  "name": "fysiske_enheder_api",
+  "version": "1.0.0",
+  "description": "Lille selvstændig API til undervisning i fysiske enheder (ESP32 + React). Ingen database - tilstand ligger i hukommelsen.",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.19.2"
+  }
+}
