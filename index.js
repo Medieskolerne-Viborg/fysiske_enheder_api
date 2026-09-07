@@ -30,7 +30,8 @@ function newRoom() {
     display: { text: "Hej fra skyen" },
     led: { color: "off" },
     button: { count: 0, lastPressed: null },
-    sensor: { value: null, updated: null },
+    sensor: { value: null, updated: null },     // fx temperatur
+    distance: { value: null, updated: null },   // fx afstandsmåler (cm)
   };
 }
 
@@ -57,6 +58,7 @@ app.get("/", (req, res) => {
       "GET  /led", "PUT  /led       { color }",
       "GET  /button", "POST /button/press",
       "GET  /sensor", "PUT  /sensor    { value }",
+      "GET  /distance", "PUT  /distance { value }",
     ],
   }, "Fysiske Enheder API kører");
 });
@@ -121,6 +123,23 @@ app.put("/sensor", (req, res) => {
   const r = room(req);
   r.sensor = { value, updated: new Date().toISOString() };
   ok(res, r.sensor, "Sensor opdateret");
+});
+
+// ── DISTANCE (input) — fx afstandsmåler (URM13). Samme form som /sensor, ────
+//    men holdt adskilt, så en enhed kan sende BÅDE temperatur og afstand. ────
+app.get("/distance", (req, res) => {
+  const d = room(req).distance;
+  ok(res, { value: d.value, updated: d.updated });
+});
+
+app.put("/distance", (req, res) => {
+  const { value } = req.body;
+  if (typeof value !== "number") {
+    return fail(res, 400, "Feltet 'value' skal være et tal");
+  }
+  const r = room(req);
+  r.distance = { value, updated: new Date().toISOString() };
+  ok(res, r.distance, "Afstand opdateret");
 });
 
 // ── Ukendt rute ─────────────────────────────────────────────────────────────
