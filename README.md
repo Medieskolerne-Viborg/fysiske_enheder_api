@@ -38,6 +38,29 @@ Alle svar: `{ status, message, data }`. Tilføj `?id=<navn>` til alle kald.
 | GET | `/schedule` | — | reference → React/enhed (liste over hold) |
 | GET | `/schedule/:hold` | — | reference → React/enhed (holdets skema) |
 | GET | `/schedule/:hold/today` | — | reference → React/enhed (dagens fag) |
+| GET | `/educations` | — | reference → React/enhed (skolens uddannelser) |
+| GET | `/educations/:slug` | — | reference → React/enhed (fag + varighed) |
+| GET | `/departures` | — | Rejseplanen-proxy → React/enhed (bus/tog) |
+
+### Uddannelser (`/educations`)
+Skolens uddannelser med **fag** og **varighed** (faste data, kilde: mcdm.dk).
+
+- `GET /educations` returnerer en kort liste (`slug`, `name`, `duration`).
+- `GET /educations/:slug` returnerer én uddannelse med `subjects` (fag) og
+  varighed. Slugs: `webudvikler`, `fotograf`, `filmproduktion` (store/små
+  bogstaver er ligegyldigt).
+
+### Afgange (`/departures`)
+Proxy til **Rejseplanens API 2.0** (bus- og togafgange). Serveren kalder
+Rejseplanen, så nøglen holdes hemmelig og browseren slipper for CORS.
+
+- Kræver en gratis nøgle fra [labs.rejseplanen.dk](https://labs.rejseplanen.dk),
+  sat som miljøvariabel **`REJSEPLANEN_KEY`** (aldrig i koden/git). Mangler den,
+  svarer endpointet `501` med en hjælpetekst.
+- `GET /departures` bruger standard-stoppet **Skaldehøjvej**. Vælg et andet med
+  `?stop=<navn>` og antal med `?max=6`.
+- Svaret er en renset liste: `{ line, direction, time, planned, delayed, track }`.
+- Resultatet caches i 30 sek. for at skåne Rejseplanens rate limit.
 
 ### Skema (`/schedule`)
 Skemaerne ligger fast i koden og er **fælles** for alle — `?id=` bruges ikke

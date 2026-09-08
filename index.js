@@ -918,6 +918,8 @@ app.get("/", (req, res) => {
       "GET  /distance", "PUT  /distance { value }",
       "GET  /schedule  (liste over hold)",
       "GET  /schedule/:hold", "GET  /schedule/:hold/today  (?date=YYYY-MM-DD)",
+      "GET  /educations", "GET  /educations/:slug",
+      "GET  /departures  (?stop=...&max=6)",
     ],
   }, "Fysiske Enheder API kører");
 });
@@ -1027,6 +1029,158 @@ app.get("/schedule/:hold", (req, res) => {
     return fail(res, 404, `Ukendt hold. Vælg et af: ${Object.keys(SCHEDULES).join(", ")}`);
   }
   ok(res, { hold: found.hold, schedule: found.schedule });
+});
+
+// ── UDDANNELSER (fælles reference-data) ─────────────────────────────────────
+//  Skolens uddannelser med fag og varighed. Faste data (ikke pr. ?id=),
+//  kilde: mediacollege.dk / mcdm.dk. Grundforløbet (GF2) er 20 uger; det
+//  efterfølgende hovedforløb veksler mellem skole og praktik.
+const EDUCATIONS = {
+  webudvikler: {
+    slug: "webudvikler",
+    name: "Webudvikler",
+    grundforlobWeeks: 20,
+    duration: "Grundforløb (GF2): 20 uger. Herefter hovedforløb med praktik.",
+    subjects: [
+      "HTML, CSS og JavaScript",
+      "Figma",
+      "Photoshop",
+      "Illustrator",
+      "Planlægning og design af websites",
+      "Webudvikling (hovedforløb: React og server-side)",
+    ],
+    link: "https://mcdm.dk/webudvikler/grundforlob/",
+  },
+  fotograf: {
+    slug: "fotograf",
+    name: "Fotograf",
+    grundforlobWeeks: 20,
+    duration: "Grundforløb (GF2): 20 uger. Herefter hovedforløb med praktik.",
+    subjects: [
+      "Fotografering i atelier og on location",
+      "Billedbehandling, print, efterbearbejdning og udstilling",
+      "Billedets historie og perceptionslære",
+      "Førstehjælp og brand (obligatorisk)",
+    ],
+    link: "https://mcdm.dk/fotograf/grundforlob-fotograf/",
+  },
+  filmproduktion: {
+    slug: "filmproduktion",
+    name: "Filmproduktion (Film & TV)",
+    grundforlobWeeks: 20,
+    duration: "Grundforløb (GF2): 20 uger. Herefter hovedforløb med praktik.",
+    subjects: [
+      "Storyboarding og tilrettelæggelse",
+      "Teknik og belysning",
+      "Billed- og lydoptagelse",
+      "Redigering og præsentation",
+      "Billedbehandling",
+      "Kommunikation",
+      "Informationsteknologi",
+    ],
+    link: "https://mcdm.dk/film-og-tv-produktionstekniker/grundforlob-film-tv/",
+  },
+};
+
+// Slå en uddannelse op (uafhængigt af store/små bogstaver).
+function findEducation(slug) {
+  const key = Object.keys(EDUCATIONS).find(
+    (k) => k.toLowerCase() === String(slug || "").toLowerCase()
+  );
+  return key ? EDUCATIONS[key] : null;
+}
+
+// Liste over uddannelser (kort udgave).
+app.get("/educations", (req, res) => {
+  const list = Object.values(EDUCATIONS).map(({ slug, name, duration }) => ({
+    slug,
+    name,
+    duration,
+  }));
+  ok(res, { educations: list });
+});
+
+// Én uddannelse med fag og varighed.
+app.get("/educations/:slug", (req, res) => {
+  const edu = findEducation(req.params.slug);
+  if (!edu) {
+    return fail(res, 404, `Ukendt uddannelse. Vælg en af: ${Object.keys(EDUCATIONS).join(", ")}`);
+  }
+  ok(res, edu);
+});
+
+// ── AFGANGE (Rejseplanen-proxy) ─────────────────────────────────────────────
+//  Rejseplanens API 2.0 kræver en nøgle (accessId) og kan ikke kaldes direkte
+//  fra en browser (CORS). Derfor kalder SERVEREN Rejseplanen her, holder nøglen
+//  hemmelig, og giver et rent /departures-endpoint videre til React/ESP32.
+//
+//  Nøgle: hentes gratis på https://labs.rejseplanen.dk og sættes som
+//  miljøvariabel  REJSEPLANEN_KEY  (aldrig i koden/git).
+//
+//  Kald:  GET /departures            (standard: Skaldehøjvej, Viborg)
+//         GET /departures?stop=...&max=6
+const RP_BASE = "https://www.rejseplanen.dk/api";
+const RP_KEY = process.env.REJSEPLANEN_KEY;
+const DEFAULT_STOP = "Skaldehøjvej";
+
+// Små caches: stop-id slås kun op sjældent, og afgange højst hvert 30. sek.
+const stopIdCache = new Map();      // stopnavn -> location-id
+const departuresCache = new Map();  // stopnavn -> { at, data }
+const DEPARTURES_TTL = 30 * 1000;
+
+// "14:05:00" -> "14:05"
+const hhmm = (t) => (typeof t === "string" ? t.slice(0, 5) : t);
+
+// Slå et stoppested op og gem dets id (så vi ikke gør det ved hvert kald).
+async function resolveStopId(stop) {
+  if (stopIdCache.has(stop)) return stopIdCache.get(stop);
+  const url = `${RP_BASE}/location.name?accessId=${RP_KEY}&input=${encodeURIComponent(stop)}&format=json`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Rejseplanen location ${res.status}`);
+  const json = await res.json();
+  const list = json.stopLocationOrCoordLocation || [];
+  const first = list.map((x) => x.StopLocation).find(Boolean);
+  if (!first) throw new Error(`Fandt ikke stoppestedet "${stop}"`);
+  stopIdCache.set(stop, first.id);
+  return first.id;
+}
+
+app.get("/departures", async (req, res) => {
+  if (!RP_KEY) {
+    return fail(res, 501, "REJSEPLANEN_KEY mangler på serveren (hent en nøgle på labs.rejseplanen.dk)");
+  }
+  const stop = String(req.query.stop || DEFAULT_STOP).slice(0, 60);
+  const max = Math.min(Math.max(parseInt(req.query.max, 10) || 6, 1), 20);
+
+  // Servér fra cache, hvis den er frisk (skåner Rejseplanens rate limit).
+  const cached = departuresCache.get(stop);
+  if (cached && Date.now() - cached.at < DEPARTURES_TTL) {
+    return ok(res, cached.data, "Afgange (cache)");
+  }
+
+  try {
+    const id = await resolveStopId(stop);
+    const url = `${RP_BASE}/departureBoard?accessId=${RP_KEY}&id=${encodeURIComponent(id)}&maxJourneys=${max}&format=json`;
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(`Rejseplanen departureBoard ${r.status}`);
+    const json = await r.json();
+
+    // Ryd op i svaret: kun det displayet skal bruge.
+    const departures = (json.Departure || []).slice(0, max).map((d) => ({
+      line: (d.name || "").trim(),                 // fx "Bus 3A"
+      direction: d.direction || "",                // hvor bussen kører hen
+      time: hhmm(d.rtTime || d.time),              // realtid hvis muligt
+      planned: hhmm(d.time),                       // planlagt tid
+      delayed: Boolean(d.rtTime && d.rtTime !== d.time),
+      track: d.rtTrack || d.track || "",
+    }));
+
+    const data = { stop, departures };
+    departuresCache.set(stop, { at: Date.now(), data });
+    ok(res, data, "Afgange");
+  } catch (err) {
+    fail(res, 502, `Kunne ikke hente afgange: ${err.message}`);
+  }
 });
 
 // ── Ukendt rute ─────────────────────────────────────────────────────────────
