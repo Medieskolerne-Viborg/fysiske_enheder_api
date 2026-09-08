@@ -4,9 +4,9 @@
 //  Ét fælles, offentligt API som både React-apps OG ESP32'er taler med.
 //  Ingen database: al tilstand ligger i hukommelsen (nulstilles ved genstart).
 //
-//  ELEV-ID ("rum"): hver elev bruger sit eget id via ?id=<navn> i URL'en,
+//  ELEV-ID ("rum"): hver elev bruger sit eget id via ?id=<id> i URL'en,
 //  så ingen overskriver hinanden. Uden id bruges rummet "demo".
-//    fx:  GET /led?id=anne     PUT /display?id=anne
+//    fx:  GET /led?id=id    PUT /display?id=id
 //
 //  Svarformat overalt:  { status: "ok" | "error", message, data }
 // ─────────────────────────────────────────────────────────────────────────
