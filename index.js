@@ -440,7 +440,7 @@ const SCHEDULES = {
       room: null,
     },
   ],
-  WebGF22602: [
+  "WebGF22602": [
     {
       week: 33,
       monday: "2026-08-10",
