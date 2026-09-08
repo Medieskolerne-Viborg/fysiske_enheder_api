@@ -3,7 +3,10 @@
 Et lille, selvstændigt API til undervisning i fysiske enheder (ESP32 + React).
 Både React-apps og ESP32'er taler med **samme offentlige API** — ingen DGS.
 
-**Ingen database:** al tilstand ligger i hukommelsen og nulstilles ved genstart.
+**Enheds-tilstand uden database:** led, display, sensor osv. ligger i
+hukommelsen og nulstilles ved genstart. **Media (billeder/videoer)** gemmes
+derimod varigt: selve filerne i et DigitalOcean Space og metadata i MongoDB
+(se afsnittet [Media](#media-billedervideoer) og [Miljøvariabler](#miljøvariabler)).
 
 ## Elev-id ("rum") — så en hel klasse kan arbejde samtidig
 API'et gemmer tilstand **pr. id**. Hver elev sender sit eget id med i URL'en:
@@ -19,11 +22,27 @@ npm start
 ```
 Kører på port `3055` (eller `PORT` fra miljøet).
 
+## Miljøvariabler
+Enheds-delen kører helt uden variabler. Media-delen kræver database + Space —
+sættes som miljøvariabler (aldrig i koden/git). Mangler de, er media-endpoints
+bare slået fra, mens resten kører.
+
+| Variabel | Til | Eksempel |
+| -------- | --- | -------- |
+| `MONGODB_URI` | MongoDB-forbindelse | `mongodb+srv://…` |
+| `SPACES_ENDPOINT` | Space-endpoint | `https://fra1.digitaloceanspaces.com` |
+| `SPACES_REGION` | Space-region | `fra1` |
+| `SPACES_BUCKET` | Navn på dit space | `mcdm-media` |
+| `SPACES_KEY` | Access key | `…` |
+| `SPACES_SECRET` | Secret key | `…` |
+| `SPACES_PUBLIC_BASE` | (valgfri) CDN-base | `https://mcdm-media.fra1.cdn.digitaloceanspaces.com` |
+| `UPLOAD_TOKEN` | (valgfri) beskytter upload/slet | et hemmeligt ord |
+
 ## Deploy (DigitalOcean m.fl.)
 - Run-kommando: `npm start`
 - Platformen sætter selv `PORT` (koden bruger `process.env.PORT`).
-- Ingen miljøvariabler eller database.
-- **Vigtigt:** kør på **én instans** (tilstanden er i hukommelsen — flere instanser ville ikke dele den).
+- Sæt miljøvariablerne ovenfor (scope: **Run time**).
+- **Vigtigt:** kør på **én instans** (enheds-tilstanden er i hukommelsen — flere instanser ville ikke dele den).
 
 ## Endpoints
 Alle svar: `{ status, message, data }`. Tilføj `?id=<navn>` til alle kald.
@@ -41,6 +60,10 @@ Alle svar: `{ status, message, data }`. Tilføj `?id=<navn>` til alle kald.
 | GET | `/educations` | — | reference → React/enhed (skolens uddannelser) |
 | GET | `/educations/:slug` | — | reference → React/enhed (fag + varighed) |
 | GET | `/departures` | — | Rejseplanen-proxy → React/enhed (bus/tog) |
+| GET | `/media` | — | liste over billeder/videoer (`?type=`, `?module=`) |
+| GET | `/media/:id` | — | ét media |
+| POST | `/media` | form-data: `file` | upload billede/video (+ `title`, `module`, `uploadedBy`) |
+| DELETE | `/media/:id` | — | slet media (også filen i Space'et) |
 
 ### Uddannelser (`/educations`)
 Skolens uddannelser med **fag** og **varighed** (faste data, kilde: mcdm.dk).
@@ -61,6 +84,26 @@ Rejseplanen, så nøglen holdes hemmelig og browseren slipper for CORS.
   `?stop=<navn>` og antal med `?max=6`.
 - Svaret er en renset liste: `{ line, direction, time, planned, delayed, track }`.
 - Resultatet caches i 30 sek. for at skåne Rejseplanens rate limit.
+
+### Media (billeder/videoer)
+Eleverne kan lægge billeder og videoer op til infoskærmen. Selve filen lægges i
+et **DigitalOcean Space**, og **metadata** (URL, type, størrelse, modul, hvem)
+gemmes i **MongoDB**. Kræver `MONGODB_URI` + `SPACES_*` (se Miljøvariabler).
+
+- `POST /media` — send som `multipart/form-data` med filfeltet **`file`**
+  (kun `image/*` og `video/*`, op til 200 MB). Valgfrit: `title`, `module`,
+  `uploadedBy`. Svarer med det gemte media (inkl. offentlig `url`).
+- `GET /media` — liste (nyeste først). Filtrér med `?type=image|video` og/eller
+  `?module=<navn>`.
+- `GET /media/:id` — ét media. `DELETE /media/:id` — sletter både metadata og fil.
+- Sæt evt. `UPLOAD_TOKEN`; så kræver `POST`/`DELETE` headeren
+  `x-upload-token: <token>` (så ikke hvem som helst kan uploade offentligt).
+
+```bash
+# Upload et billede
+curl -X POST "https://<url>/media" \
+  -F "file=@billede.jpg" -F "title=Forsidebillede" -F "module=galleri"
+```
 
 ### Skema (`/schedule`)
 Skemaerne ligger fast i koden og er **fælles** for alle — `?id=` bruges ikke

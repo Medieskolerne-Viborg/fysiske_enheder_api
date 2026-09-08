@@ -11,8 +11,14 @@
 //  Svarformat overalt:  { status: "ok" | "error", message, data }
 // ─────────────────────────────────────────────────────────────────────────
 
+import "./env.js"; // SKAL være først: loader .env(.local) før storage.js/db.js
 import express from "express";
 import cors from "cors";
+import multer from "multer";
+import crypto from "node:crypto";
+import { connectDb, dbReady } from "./db.js";
+import { Media } from "./models/Media.js";
+import { uploadFile, deleteFile, storageReady } from "./storage.js";
 
 const app = express();
 app.use(express.json());
@@ -920,6 +926,8 @@ app.get("/", (req, res) => {
       "GET  /schedule/:hold", "GET  /schedule/:hold/today  (?date=YYYY-MM-DD)",
       "GET  /educations", "GET  /educations/:slug",
       "GET  /departures  (?stop=...&max=6)",
+      "GET  /media", "GET  /media/:id",
+      "POST /media  (form-data: file)", "DELETE /media/:id",
     ],
   }, "Fysiske Enheder API kører");
 });
@@ -1183,8 +1191,107 @@ app.get("/departures", async (req, res) => {
   }
 });
 
+// ── MEDIA (billeder/videoer) — MongoDB + DigitalOcean Space ─────────────────
+//  Selve filen lægges i Space'et; metadata gemmes i MongoDB.
+//  Kræver MONGODB_URI + SPACES_* som miljøvariabler (se README).
+
+// Tager imod filen i hukommelsen, så vi kan sende den videre til Space'et.
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 200 * 1024 * 1024 }, // 200 MB (rummer også korte videoer)
+  fileFilter: (req, file, cb) => {
+    const okType =
+      file.mimetype.startsWith("image/") || file.mimetype.startsWith("video/");
+    cb(okType ? null : new Error("Kun billeder og videoer er tilladt"), okType);
+  },
+});
+
+// Slår media-endpoints fra, hvis databasen ikke er sat op.
+const requireDb = (req, res, next) =>
+  dbReady() ? next() : fail(res, 501, "Database ikke konfigureret (sæt MONGODB_URI)");
+
+// Simpel beskyttelse af upload/slet: er UPLOAD_TOKEN sat, kræves samme token i
+// headeren x-upload-token. Er den ikke sat, er det åbent (kun til udvikling).
+const requireUploadToken = (req, res, next) => {
+  const token = process.env.UPLOAD_TOKEN;
+  if (!token) return next();
+  if (req.get("x-upload-token") === token) return next();
+  return fail(res, 401, "Manglende eller forkert x-upload-token");
+};
+
+// Liste over media (nyeste først). Filtrér med ?type=image|video&module=...
+app.get("/media", requireDb, async (req, res) => {
+  const filter = {};
+  if (req.query.type) filter.type = req.query.type;
+  if (req.query.module) filter.module = req.query.module;
+  const media = await Media.find(filter).sort({ createdAt: -1 }).limit(100);
+  ok(res, { media });
+});
+
+// Ét media.
+app.get("/media/:id", requireDb, async (req, res) => {
+  try {
+    const item = await Media.findById(req.params.id);
+    if (!item) return fail(res, 404, "Media ikke fundet");
+    ok(res, item);
+  } catch {
+    fail(res, 400, "Ugyldigt id");
+  }
+});
+
+// Upload: send som multipart/form-data med filfeltet "file" (+ evt. title,
+// module, uploadedBy). Filen lægges i Space'et, metadata gemmes i MongoDB.
+app.post("/media", requireUploadToken, requireDb, upload.single("file"), async (req, res) => {
+  if (!storageReady()) return fail(res, 501, "Space ikke konfigureret (sæt SPACES_*)");
+  if (!req.file) return fail(res, 400, "Ingen fil - send den som form-data feltet 'file'");
+  try {
+    const isVideo = req.file.mimetype.startsWith("video/");
+    const ext = (req.file.originalname.split(".").pop() || "").toLowerCase();
+    // Alle filer lægges i mcd_viborg-mappen i Space'et (kan ændres med SPACES_FOLDER).
+    const folder = (process.env.SPACES_FOLDER || "mcd_viborg").replace(/^\/+|\/+$/g, "");
+    const objectKey = `${folder}/${Date.now()}-${crypto.randomBytes(4).toString("hex")}${ext ? "." + ext : ""}`;
+
+    const url = await uploadFile(req.file.buffer, objectKey, req.file.mimetype);
+
+    const doc = await Media.create({
+      title: req.body.title || req.file.originalname,
+      type: isVideo ? "video" : "image",
+      url,
+      key: objectKey,
+      mimeType: req.file.mimetype,
+      size: req.file.size,
+      module: req.body.module || "",
+      uploadedBy: req.body.uploadedBy || "",
+    });
+    ok(res, doc, "Uploadet");
+  } catch (err) {
+    fail(res, 502, `Upload fejlede: ${err.message}`);
+  }
+});
+
+// Slet media (både metadata i DB og filen i Space'et).
+app.delete("/media/:id", requireUploadToken, requireDb, async (req, res) => {
+  try {
+    const item = await Media.findById(req.params.id);
+    if (!item) return fail(res, 404, "Media ikke fundet");
+    if (storageReady()) await deleteFile(item.key);
+    await item.deleteOne();
+    ok(res, { id: item._id }, "Slettet");
+  } catch (err) {
+    fail(res, 400, `Kunne ikke slette: ${err.message}`);
+  }
+});
+
 // ── Ukendt rute ─────────────────────────────────────────────────────────────
 app.use((req, res) => fail(res, 404, "Ukendt endpoint"));
+
+// Fejl-håndtering (fx multer: fil for stor / forkert type) → pænt JSON-svar.
+app.use((err, req, res, _next) => {
+  fail(res, 400, err.message || "Der skete en fejl");
+});
+
+// Forbind til databasen (hvis MONGODB_URI er sat) og start serveren.
+connectDb();
 
 app.listen(PORT, "0.0.0.0", () =>
   console.log(`Fysiske Enheder API kører på port ${PORT}`));

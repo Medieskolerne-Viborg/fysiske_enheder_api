@@ -9,7 +9,11 @@
     "dev": "node --watch index.js"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1127.0",
     "cors": "^2.8.5",
-    "express": "^4.19.2"
+    "dotenv": "^17.4.2",
+    "express": "^4.19.2",
+    "mongoose": "^9.9.5",
+    "multer": "^2.3.0"
   }
 }
