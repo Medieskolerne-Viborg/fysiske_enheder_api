@@ -1,0 +1,4 @@
+# Hvem der skal godkende ændringer (code owners).
+# '*' = alle filer i repoet. Enhver pull request kræver godkendelse fra
+# nedenstående, når "Require review from Code Owners" er slået til på main.
+* @AnneLundM
