@@ -1196,12 +1196,31 @@ app.get("/departures", async (req, res) => {
 //  Kræver MONGODB_URI + SPACES_* som miljøvariabler (se README).
 
 // Tager imod filen i hukommelsen, så vi kan sende den videre til Space'et.
+// Kendte billed-/video-endelser → content-type. Bruges når klienten (fx Postman)
+// sender filen som "application/octet-stream" i stedet for den rigtige type.
+const EXT_MIME = {
+  png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif",
+  webp: "image/webp", avif: "image/avif", bmp: "image/bmp", svg: "image/svg+xml",
+  mp4: "video/mp4", webm: "video/webm", mov: "video/quicktime",
+  m4v: "video/x-m4v", ogg: "video/ogg",
+};
+
+const extOf = (name) => (name.split(".").pop() || "").toLowerCase();
+
+// Find den bedste content-type: brug klientens hvis den allerede er billede/
+// video, ellers gæt ud fra filendelsen (så octet-stream fra Postman virker).
+const resolveMime = (file) => {
+  const m = file.mimetype || "";
+  if (m.startsWith("image/") || m.startsWith("video/")) return m;
+  return EXT_MIME[extOf(file.originalname)] || m || "application/octet-stream";
+};
+
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 200 * 1024 * 1024 }, // 200 MB (rummer også korte videoer)
   fileFilter: (req, file, cb) => {
-    const okType =
-      file.mimetype.startsWith("image/") || file.mimetype.startsWith("video/");
+    const mime = resolveMime(file);
+    const okType = mime.startsWith("image/") || mime.startsWith("video/");
     cb(okType ? null : new Error("Kun billeder og videoer er tilladt"), okType);
   },
 });
@@ -1245,20 +1264,22 @@ app.post("/media", requireUploadToken, requireDb, upload.single("file"), async (
   if (!storageReady()) return fail(res, 501, "Space ikke konfigureret (sæt SPACES_*)");
   if (!req.file) return fail(res, 400, "Ingen fil - send den som form-data feltet 'file'");
   try {
-    const isVideo = req.file.mimetype.startsWith("video/");
-    const ext = (req.file.originalname.split(".").pop() || "").toLowerCase();
+    const contentType = resolveMime(req.file);
+    const isVideo = contentType.startsWith("video/");
+    const ext = extOf(req.file.originalname);
     // Alle filer lægges i mcd_viborg-mappen i Space'et (kan ændres med SPACES_FOLDER).
     const folder = (process.env.SPACES_FOLDER || "mcd_viborg").replace(/^\/+|\/+$/g, "");
     const objectKey = `${folder}/${Date.now()}-${crypto.randomBytes(4).toString("hex")}${ext ? "." + ext : ""}`;
 
-    const url = await uploadFile(req.file.buffer, objectKey, req.file.mimetype);
+    // Gem med korrekt content-type, så browseren VISER filen (ikke downloader den).
+    const url = await uploadFile(req.file.buffer, objectKey, contentType);
 
     const doc = await Media.create({
       title: req.body.title || req.file.originalname,
       type: isVideo ? "video" : "image",
       url,
       key: objectKey,
-      mimeType: req.file.mimetype,
+      mimeType: contentType,
       size: req.file.size,
       module: req.body.module || "",
       uploadedBy: req.body.uploadedBy || "",
