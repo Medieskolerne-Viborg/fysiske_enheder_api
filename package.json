@@ -4,6 +4,9 @@
   "description": "Lille selvstændig API til undervisning i fysiske enheder (ESP32 + React). Ingen database - tilstand ligger i hukommelsen.",
   "main": "index.js",
   "type": "module",
+  "engines": {
+    "node": "20.x"
+  },
   "scripts": {
     "start": "node index.js",
     "dev": "node --watch index.js"

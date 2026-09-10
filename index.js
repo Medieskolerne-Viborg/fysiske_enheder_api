@@ -1213,9 +1213,12 @@ app.get("/news", async (req, res) => {
 
   // Timeout, så et langsomt/hængende news-API ikke får HELE requesten til at
   // hænge (hvilket ellers giver en 502-gateway-timeout fra App Platform).
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 10000);
+  // Alt ligger i try, så selv en manglende global (gammel Node) fanges og
+  // giver et pænt JSON-svar i stedet for at vælte processen.
+  let timer;
   try {
+    const controller = new AbortController();
+    timer = setTimeout(() => controller.abort(), 10000);
     // encodeURIComponent, så en forkert nøgle (fx en hel URL) ikke sprøjter
     // ekstra query-parametre ind - den bliver bare til én værdi.
     const url = `https://api.apitube.io/v1/news/everything?language.code=en&per_page=${perPage}&api_key=${encodeURIComponent(NEWS_KEY)}`;
