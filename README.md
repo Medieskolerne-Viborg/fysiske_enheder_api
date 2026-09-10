@@ -37,6 +37,7 @@ bare slået fra, mens resten kører.
 | `SPACES_SECRET` | Secret key | `…` |
 | `SPACES_PUBLIC_BASE` | (valgfri) CDN-base | `https://mcdm-media.fra1.cdn.digitaloceanspaces.com` |
 | `UPLOAD_TOKEN` | (valgfri) beskytter upload/slet | et hemmeligt ord |
+| `NEWS_API_KEY` | nøgle til news-feedet (server-side) | `api_live_…` |
 
 ## Deploy (DigitalOcean m.fl.)
 - Run-kommando: `npm start`
@@ -60,6 +61,7 @@ Alle svar: `{ status, message, data }`. Tilføj `?id=<navn>` til alle kald.
 | GET | `/educations` | — | reference → React/enhed (skolens uddannelser) |
 | GET | `/educations/:slug` | — | reference → React/enhed (fag + varighed) |
 | GET | `/departures` | — | Rejseplanen-proxy → React/enhed (bus/tog) |
+| GET | `/news` | — | News-proxy → React/enhed (nyheder) |
 | GET | `/media` | — | liste over billeder/videoer (`?type=`, `?module=`) |
 | GET | `/media/:id` | — | ét media |
 | POST | `/media` | form-data: `file` | upload billede/video (+ `title`, `module`, `uploadedBy`) |
@@ -84,6 +86,15 @@ Rejseplanen, så nøglen holdes hemmelig og browseren slipper for CORS.
   `?stop=<navn>` og antal med `?max=6`.
 - Svaret er en renset liste: `{ line, direction, time, planned, delayed, track }`.
 - Resultatet caches i 30 sek. for at skåne Rejseplanens rate limit.
+
+### Nyheder (`/news`)
+Proxy til et eksternt news-feed (apitube). Serveren kalder feedet med nøglen, så
+den **ikke** ligger i frontend-bundlen (hvor alle kunne læse den).
+
+- Kræver **`NEWS_API_KEY`** som miljøvariabel (server-side). Mangler den, svarer
+  endpointet `501`.
+- `GET /news` (valgfrit `?per_page=10`). Svaret er feedets JSON (med `results`).
+- Resultatet caches i 5 min. for at skåne news-API'ets kvote.
 
 ### Media (billeder/videoer)
 Eleverne kan lægge billeder og videoer op til infoskærmen. Selve filen lægges i

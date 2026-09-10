@@ -926,6 +926,7 @@ app.get("/", (req, res) => {
       "GET  /schedule/:hold", "GET  /schedule/:hold/today  (?date=YYYY-MM-DD)",
       "GET  /educations", "GET  /educations/:slug",
       "GET  /departures  (?stop=...&max=6)",
+      "GET  /news  (?per_page=10)",
       "GET  /media", "GET  /media/:id",
       "POST /media  (form-data: file)", "DELETE /media/:id",
     ],
@@ -1188,6 +1189,38 @@ app.get("/departures", async (req, res) => {
     ok(res, data, "Afgange");
   } catch (err) {
     fail(res, 502, `Kunne ikke hente afgange: ${err.message}`);
+  }
+});
+
+// ── NYHEDER (proxy til eksternt news-feed) ──────────────────────────────────
+//  News-API'et kræver en nøgle. Den MÅ IKKE ligge i frontenden (VITE_-variabler
+//  bages ind i den offentlige bundle). Derfor kalder SERVEREN feedet med nøglen
+//  fra miljøvariablen NEWS_API_KEY, og frontenden henter bare GET /news.
+//  Svaret caches, så vi skåner news-API'ets kvote.
+const NEWS_KEY = process.env.NEWS_API_KEY;
+const newsCache = { at: 0, data: null };
+const NEWS_TTL = 5 * 60 * 1000; // 5 min
+
+app.get("/news", async (req, res) => {
+  if (!NEWS_KEY) {
+    return fail(res, 501, "NEWS_API_KEY mangler på serveren");
+  }
+  const perPage = Math.min(Math.max(parseInt(req.query.per_page, 10) || 10, 1), 50);
+
+  if (newsCache.data && Date.now() - newsCache.at < NEWS_TTL) {
+    return ok(res, newsCache.data, "Nyheder (cache)");
+  }
+
+  try {
+    const url = `https://api.apitube.io/v1/news/everything?language.code=en&per_page=${perPage}&api_key=${NEWS_KEY}`;
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(`News API ${r.status}`);
+    const json = await r.json();
+    newsCache.at = Date.now();
+    newsCache.data = json;
+    ok(res, json, "Nyheder");
+  } catch (err) {
+    fail(res, 502, `Kunne ikke hente nyheder: ${err.message}`);
   }
 });
 
