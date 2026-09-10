@@ -1211,9 +1211,15 @@ app.get("/news", async (req, res) => {
     return ok(res, newsCache.data, "Nyheder (cache)");
   }
 
+  // Timeout, så et langsomt/hængende news-API ikke får HELE requesten til at
+  // hænge (hvilket ellers giver en 502-gateway-timeout fra App Platform).
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10000);
   try {
-    const url = `https://api.apitube.io/v1/news/everything?language.code=en&per_page=${perPage}&api_key=${NEWS_KEY}`;
-    const r = await fetch(url);
+    // encodeURIComponent, så en forkert nøgle (fx en hel URL) ikke sprøjter
+    // ekstra query-parametre ind - den bliver bare til én værdi.
+    const url = `https://api.apitube.io/v1/news/everything?language.code=en&per_page=${perPage}&api_key=${encodeURIComponent(NEWS_KEY)}`;
+    const r = await fetch(url, { signal: controller.signal });
     if (!r.ok) throw new Error(`News API ${r.status}`);
     const json = await r.json();
     newsCache.at = Date.now();
@@ -1221,6 +1227,8 @@ app.get("/news", async (req, res) => {
     ok(res, json, "Nyheder");
   } catch (err) {
     fail(res, 502, `Kunne ikke hente nyheder: ${err.message}`);
+  } finally {
+    clearTimeout(timer);
   }
 });
 
